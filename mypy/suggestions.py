@@ -152,7 +152,7 @@ class SuggestionEngine:
         else:
             return suggestion
 
-    def suggest_callsites(self, function: str) -> str:
+    def suggest_callsites_orig(self, function: str) -> str:
         """Find a list of call sites of function."""
         with self.restore_after(function):
             _, _, node = self.find_node(function)
@@ -162,6 +162,21 @@ class SuggestionEngine:
             ["%s:%s: %s" % (path, line, self.format_args(arg_kinds, arg_names, arg_types))
              for path, line, arg_kinds, _, arg_names, arg_types in callsites]
         ))
+
+    def suggest_callsites_find_def(self, function: str) -> str:
+        with self.restore_after(function):
+            modname, _, node = self.find_node(function)
+            path = self.fgmanager.graph[modname].path
+            return "%s:%s:%s" % (path, node.line, node.column)
+
+    def suggest_callsites(self, function: str) -> str:
+        with self.restore_after(function):
+            path, line, column = function.split(" ", 3)
+            node = self.find_name_expr(path, int(line), int(column))
+            if not node:
+                return 'No name expression at this location'
+            else:
+                return "%s (%s:%s)" % (node.name, node.line, node.column)
 
     @contextmanager
     def restore_after(self, target: str) -> Iterator[None]:
@@ -355,6 +370,29 @@ class SuggestionEngine:
 
         return (modname, tail, node)
 
+    def find_name_expr(self, path: str, line: int, column: int) -> Optional[Node]:
+        """From a target name, return module/target names and the func def."""
+        # TODO: Also return OverloadedFuncDef -- currently these are ignored.
+        state = [t for t in self.fgmanager.graph.values() if t.path == path][0]
+        tree = self.ensure_loaded(state)
+
+        class NameFinder(TraverserVisitor):
+            node: Optional[Node] = None
+            def __init__(self, line, column) -> None:
+                super().__init__()
+                self.line = line
+                self.column = column
+
+            def visit_name_expr(self, node: 'mypy.nodes.NameExpr') -> None:
+                if node_contains_offset(node, self.line, self.column):
+                    self.node = node
+            
+            # TODO: visit_var, visit_func_def etc.
+        
+        finder = NameFinder(line, column)
+        tree.accept(finder)
+        return finder.node
+
     def try_type(self, func: FuncDef, typ: Type) -> List[str]:
         """Recheck a function while assuming it has type typ.
 
@@ -473,3 +511,11 @@ def dedup(old: List[T]) -> List[T]:
         if x not in new:
             new.append(x)
     return new
+
+def node_contains_offset(node, line, column):
+    if (line < node.line or line > node.end_line) or (
+        node.line == line and column < node.column) or (
+        node.end_line == line and column > node.end_column):
+        return False
+    
+    return True
