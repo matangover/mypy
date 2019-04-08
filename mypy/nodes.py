@@ -595,8 +595,9 @@ class FuncItem(FuncBase):
 
     def set_line(self, target: Union[Context, int], column: Optional[int] = None) -> None:
         super().set_line(target, column)
-        for arg in self.arguments:
-            arg.set_line(self.line, self.column)
+        # TODO: When is this needed? This disrupts correct column information for args.
+        #for arg in self.arguments:
+        #    arg.set_line(self.line, self.column)
 
     def is_dynamic(self) -> bool:
         return self.type is None

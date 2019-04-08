@@ -599,8 +599,9 @@ class ASTConverter:
                 extra_ignore, arg_type = parse_type_comment(type_comment, arg.lineno, self.errors)
                 if extra_ignore:
                     self.extra_type_ignores.append(arg.lineno)
-
-        return Argument(Var(arg.arg), arg_type, self.visit(default), kind)
+        argument = Argument(Var(arg.arg), arg_type, self.visit(default), kind)
+        argument.set_line(arg.lineno, arg.col_offset)
+        return argument
 
     def fail_arg(self, msg: str, arg: ast3.arg) -> None:
         self.fail(msg, arg.lineno, arg.col_offset)
