@@ -35,7 +35,7 @@ from mypy.types import (
 from mypy.build import State
 from mypy.nodes import (
     ARG_POS, ARG_STAR, ARG_NAMED, ARG_STAR2, ARG_NAMED_OPT, FuncDef, MypyFile, SymbolTable,
-    SymbolNode, TypeInfo, Node, Expression, ReturnStmt,
+    SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr,
 )
 from mypy.server.update import FineGrainedBuildManager
 from mypy.server.target import module_prefix, split_target
@@ -170,13 +170,21 @@ class SuggestionEngine:
             return "%s:%s:%s" % (path, node.line, node.column)
 
     def suggest_callsites(self, function: str) -> str:
-        with self.restore_after(function):
-            path, line, column = function.split(" ", 3)
-            node = self.find_name_expr(path, int(line), int(column))
-            if not node:
-                return 'No name expression at this location'
-            else:
-                return "%s (%s:%s)" % (node.name, node.line, node.column)
+        path, line_str, column_str = function.split(" ", 3)
+        # Columns are zero based in the AST, but rows are 1-based.
+        column = int(column_str) - 1
+        node = self.find_name_expr(path, int(line_str), column)
+        if not node:
+            return 'No name expression at this location'
+        
+        result = "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
+        def_node = node.node
+        if def_node is None:
+            result += 'Definition not found'
+        else:
+            result += "Definition of '%s' at %s:%s (%s)" % (def_node.name(), def_node.line, def_node.column + 1, def_node)
+        
+        return result
 
     @contextmanager
     def restore_after(self, target: str) -> Iterator[None]:
@@ -370,14 +378,14 @@ class SuggestionEngine:
 
         return (modname, tail, node)
 
-    def find_name_expr(self, path: str, line: int, column: int) -> Optional[Node]:
+    def find_name_expr(self, path: str, line: int, column: int) -> Optional[NameExpr]:
         """From a target name, return module/target names and the func def."""
         # TODO: Also return OverloadedFuncDef -- currently these are ignored.
         state = [t for t in self.fgmanager.graph.values() if t.path == path][0]
         tree = self.ensure_loaded(state)
 
         class NameFinder(TraverserVisitor):
-            node: Optional[Node] = None
+            node: Optional[NameExpr] = None
             def __init__(self, line, column) -> None:
                 super().__init__()
                 self.line = line
