@@ -21,11 +21,12 @@ Other things:
  * Like something with tracking constraints/unification variables?
  * No understanding of type variables at *all*
 """
-
+import functools
 from typing import (
     List, Optional, Set, Tuple, Dict, Callable, Union, NamedTuple, TypeVar, Iterator,
 )
 
+from mypy.util import short_type
 import mypy.checker
 import mypy.types
 from mypy.state import strict_optional_set
@@ -176,13 +177,21 @@ class SuggestionEngine:
         node = self.find_name_expr(path, int(line_str), column)
         if not node:
             return 'No name expression at this location'
+        if isinstance(node, str):
+            return node
         
         result = "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
         def_node = node.node
         if def_node is None:
             result += 'Definition not found'
         else:
-            result += "Definition of '%s' at %s:%s (%s)" % (def_node.name(), def_node.line, def_node.column + 1, def_node)
+            filename = self.get_file(def_node)
+            if filename is None:
+                result += "Could not find file name, guessing symbol is defined in same file.\n"
+                filename = path
+            # Column is zero-based. Sometimes returns -1 :\
+            column = 1 if def_node.column == -1 else def_node.column + 1
+            result += "Definition of '%s' at %s:%s:%s (%s)" % (def_node.name(), filename, def_node.line, column, short_type(def_node))
         
         return result
 
@@ -378,10 +387,13 @@ class SuggestionEngine:
 
         return (modname, tail, node)
 
-    def find_name_expr(self, path: str, line: int, column: int) -> Optional[NameExpr]:
+    def find_name_expr(self, path: str, line: int, column: int) -> Union[Optional[NameExpr], str]:
         """From a target name, return module/target names and the func def."""
-        # TODO: Also return OverloadedFuncDef -- currently these are ignored.
-        state = [t for t in self.fgmanager.graph.values() if t.path == path][0]
+        states = [t for t in self.fgmanager.graph.values() if t.path == path]
+        if not states:
+            loaded = '\n'.join([t.path for t in self.fgmanager.graph.values()])
+            return f'Module not found: {path}. Loaded modules:\n{loaded}'
+        state = states[0]
         tree = self.ensure_loaded(state)
 
         class NameFinder(TraverserVisitor):
@@ -400,6 +412,21 @@ class SuggestionEngine:
         finder = NameFinder(line, column)
         tree.accept(finder)
         return finder.node
+
+    def get_file(self, node: Node) -> Optional[str]:
+        print(f'looking for {type(node)}')
+        mypy_files = self.fgmanager.graph.values()
+        if isinstance(node, TypeInfo):
+            node = node.defn
+        finder = NodeFinder(node)
+        for file in mypy_files:
+            print('looking in %s' % file.path)
+            tree = self.ensure_loaded(file)
+            tree.accept(finder)
+            if finder.found:
+                return file.path
+
+        return None
 
     def try_type(self, func: FuncDef, typ: Type) -> List[str]:
         """Recheck a function while assuming it has type typ.
@@ -527,3 +554,33 @@ def node_contains_offset(node, line, column):
         return False
     
     return True
+
+def universal_visitor():
+    def decorator(visitor):
+        visit_funcs = [func for func in dir(visitor) if func.startswith('visit_')]
+        class UniversalVisitor(visitor):
+            pass
+
+        for func in visit_funcs:
+            def wrap(f):
+                orig_func = getattr(visitor, f)
+                @functools.wraps(orig_func)
+                def wrapped(self, node, *args, **kwargs):
+                    orig_func(self, node, *args, **kwargs)
+                    self.process_node(node)
+                return wrapped
+            setattr(UniversalVisitor, func, wrap(func))
+
+        return UniversalVisitor
+    return decorator
+
+@universal_visitor()
+class NodeFinder(TraverserVisitor):
+    def __init__(self, node_to_find: Node):
+        self.node_to_find = node_to_find
+        self.found = False
+
+    def process_node(self, node: Node):
+        print(f'process: {type(node)}')
+        if self.node_to_find == node:
+            self.found = True
