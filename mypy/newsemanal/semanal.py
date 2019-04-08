@@ -204,6 +204,7 @@ class NewSemanticAnalyzer(NodeVisitor[None],
     # not be found in phase 1, for example due to * imports.
     errors = None  # type: Errors     # Keeps track of generated errors
     plugin = None  # type: Plugin     # Mypy plugin for special casing of library features
+    expr_to_find: NameExpr = None
 
     def __init__(self,
                  modules: Dict[str, MypyFile],
@@ -433,6 +434,7 @@ class NewSemanticAnalyzer(NodeVisitor[None],
         del self.options
 
     def visit_func_def(self, defn: FuncDef) -> None:
+        # print('Visit func:', defn.name())
         defn.is_conditional = self.block_depth[-1] > 0
 
         # Set full names even for those definitionss that aren't added
@@ -3212,6 +3214,10 @@ class NewSemanticAnalyzer(NodeVisitor[None],
 
     def visit_name_expr(self, expr: NameExpr) -> None:
         n = self.lookup(expr.name, expr)
+        # print('Papi:', n.node.name())
+        if self.expr_to_find is not None and expr.node == self.expr_to_find:
+            print('FOUND!')
+            self.lookup_result = n
         if n:
             if isinstance(n.node, TypeVarExpr) and self.tvar_scope.get_binding(n):
                 self.fail("'{}' is a type variable and only valid in type "

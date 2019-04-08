@@ -28,7 +28,7 @@ import contextlib
 from typing import List, Tuple, Optional, Union, Callable, Iterator
 
 from mypy.nodes import (
-    MypyFile, TypeInfo, FuncDef, Decorator, OverloadedFuncDef
+    MypyFile, TypeInfo, FuncDef, Decorator, OverloadedFuncDef, NameExpr,
 )
 from mypy.newsemanal.semanal_typeargs import TypeArgumentAnalyzer
 from mypy.state import strict_optional_set
@@ -42,6 +42,7 @@ from mypy.newsemanal.semanal_classprop import (
 from mypy.errors import Errors
 from mypy.newsemanal.semanal_infer import infer_decorator_signature_if_simple
 from mypy.checker import FineGrainedDeferredNode
+from mypy.traverser import TraverserVisitor
 import mypy.build
 
 MYPY = False
@@ -280,6 +281,8 @@ def semantic_analyze_target(target: str,
             analyzer.refresh_partial(refresh_node, patches, final_iteration)
             if isinstance(node, Decorator):
                 infer_decorator_signature_if_simple(node, analyzer)
+
+            #find_def(state, analyzer)
     for dep in analyzer.imports:
         state.dependencies.append(dep)
         priority = mypy.build.PRI_LOW
@@ -290,6 +293,59 @@ def semantic_analyze_target(target: str,
     else:
         return [], analyzer.incomplete, analyzer.progress
 
+def find_def(state, analyzer):
+    node = find_name_expr(state, 'mypy/suggestions.py', 174, 40)
+    if not node:
+        return 'No name expression at this location'
+
+    print('Looking for definition of: %s (%s:%s)' % (node.name, node.line, node.column))
+    def_node = node.node
+    if def_node is None:
+        print('Definition not found')
+        return
+    print("%s (%s:%s)" % (def_node.name(), def_node.line, def_node.column))
+    # return "%s (%s:%s)" % (node.name, node.line, node.column)
+    #def_node = self.fgmanager.manager.new_semantic_analyzer.lookup(name_node.name, name_node)
+    
+    #analyzer.expr_to_find = node
+    #with analyzer.file_context(file_node=state.tree,
+    #                        fnam=state.tree.path,
+    #                        options=state.options,
+    #                        active_type=None):
+    #    analyzer.refresh_top_level(state.tree)
+    #def_node = analyzer.lookup_result
+    #print("%s (%s:%s)" % (def_node.node.name, def_node.node.line, def_node.node.column))
+
+def find_name_expr(state: 'State', path: str, line: int, column: int) -> Optional[NameExpr]:
+        """From a target name, return module/target names and the func def."""
+        # TODO: Also return OverloadedFuncDef -- currently these are ignored.
+        #state = [t for t in self.fgmanager.graph.values() if t.path == path][0]
+        #tree = self.ensure_loaded(state)
+
+        class NameFinder(TraverserVisitor):
+            node: Optional[NameExpr] = None
+            def __init__(self, line, column) -> None:
+                super().__init__()
+                self.line = line
+                self.column = column
+
+            def visit_name_expr(self, node: 'mypy.nodes.NameExpr') -> None:
+                if node_contains_offset(node, self.line, self.column):
+                    self.node = node
+            
+            # TODO: visit_var, visit_func_def etc.
+        
+        finder = NameFinder(line, column)
+        state.tree.accept(finder)
+        return finder.node
+
+def node_contains_offset(node, line, column):
+    if (line < node.line or line > node.end_line) or (
+        node.line == line and column < node.column) or (
+        node.end_line == line and column > node.end_column + 1):
+        return False
+    
+    return True
 
 def check_type_arguments(graph: 'Graph', scc: List[str], errors: Errors) -> None:
     for module in scc:

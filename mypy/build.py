@@ -2056,6 +2056,45 @@ class State:
                                 typemap=self.type_map())
             manager.report_file(self.tree, self.type_map(), self.options)
 
+            #self.find_def()
+
+    def find_def(self):
+        node = self.find_name_expr('mypy/suggestions.py', 187, 48)
+        if not node:
+            print('No name expression at this location')
+            return
+
+        print('Looking for definition of: %s (%s:%s)' % (node.name, node.line, node.column))
+        def_node = node.node
+        if def_node is None:
+            print('Definition not found')
+            return
+        print("%s (%s:%s)" % (def_node.name(), def_node.line, def_node.column))
+    
+    def find_name_expr(self, path: str, line: int, column: int) -> 'Optional[NameExpr]':
+        """From a target name, return module/target names and the func def."""
+        # TODO: Also return OverloadedFuncDef -- currently these are ignored.
+        #state = [t for t in self.fgmanager.graph.values() if t.path == path][0]
+        #tree = self.ensure_loaded(state)
+        from mypy.traverser import TraverserVisitor
+        class NameFinder(TraverserVisitor):
+            node: 'Optional[NameExpr]' = None
+            def __init__(self, line, column) -> None:
+                super().__init__()
+                self.line = line
+                self.column = column
+
+            def visit_name_expr(self, node: 'mypy.nodes.NameExpr') -> None:
+                from mypy.newsemanal.semanal_main import node_contains_offset
+                if node_contains_offset(node, self.line, self.column):
+                    self.node = node
+            
+            # TODO: visit_var, visit_func_def etc.
+        
+        finder = NameFinder(line, column)
+        self.tree.accept(finder)
+        return finder.node
+
     def _patch_indirect_dependencies(self,
                                      module_refs: Set[str],
                                      type_map: Dict[Expression, Type]) -> None:
