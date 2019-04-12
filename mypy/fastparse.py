@@ -276,9 +276,11 @@ class ASTConverter:
     def set_line(self, node: N, n: Union[ast3.expr, ast3.stmt]) -> N:
         node.line = n.lineno
         node.column = n.col_offset
-        # TODO: CPython bug? Return objects don't have end_lineno.
-        node.end_line = n.end_lineno if hasattr(n, 'end_lineno') else n.lineno
-        node.end_column = n.end_col_offset if hasattr(n, 'end_col_offset') else n.col_offset
+        # TODO: End positions exist only from Python 3.8.
+        # node.end_line = n.end_lineno if hasattr(n, 'end_lineno') else n.lineno
+        # node.end_column = n.end_col_offset if hasattr(n, 'end_col_offset') else n.col_offset
+        node.end_line = n.end_lineno
+        node.end_column = n.end_col_offset
         return node
 
     def translate_expr_list(self, l: Sequence[AST]) -> List[Expression]:
@@ -905,6 +907,8 @@ class ASTConverter:
         body = ast3.Return(n.body)
         body.lineno = n.lineno
         body.col_offset = n.col_offset
+        body.end_lineno = n.end_lineno
+        body.end_col_offset = n.end_col_offset
 
         e = LambdaExpr(self.transform_args(n.args, n.lineno),
                        self.as_required_block([body], n.lineno))
