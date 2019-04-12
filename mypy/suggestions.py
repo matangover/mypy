@@ -37,7 +37,7 @@ from mypy.build import State
 from mypy.nodes import (
     ARG_POS, ARG_STAR, ARG_NAMED, ARG_STAR2, ARG_NAMED_OPT, FuncDef, MypyFile, SymbolTable,
     SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr, SymbolTableNode, Var,
-    AssignmentStmt, Context, RefExpr
+    AssignmentStmt, Context, RefExpr, FuncBase
 )
 from mypy.server.update import FineGrainedBuildManager
 from mypy.server.target import module_prefix, split_target
@@ -143,7 +143,7 @@ class SuggestionEngine:
         self.plugin = self.manager.plugin
         self.graph = fgmanager.graph
 
-    def suggest(self, function: str, give_json: bool) -> str:
+    def suggest_orig(self, function: str, give_json: bool) -> str:
         """Suggest an inferred type for function."""
         with self.restore_after(function):
             with self.with_export_types():
@@ -209,6 +209,50 @@ class SuggestionEngine:
             result += "Definition at %s:%s:%s (%s)" % (filename, def_node.line, column, short_type(def_node))
         
         return result
+
+    def suggest(self, function: str, give_json: bool) -> str:
+        path, line_str, column_str = function.split(" ", 3)
+        # Columns are zero based in the AST, but rows are 1-based.
+        column = int(column_str) - 1
+        try:
+            node, mypy_file = self.find_name_expr(path, int(line_str), column)
+        except RuntimeError as e:
+            return e.args[0]
+
+        if node is None:
+            return 'Unknown. No name expression at this location'
+
+        def_node: Optional[Node] = None
+        if isinstance(node, RefExpr):
+            def_node = node.node
+        elif isinstance(node, Instance):
+            def_node = node.type
+        else:
+            return f'Unknown expression: {short_type(node)}'
+        
+        if isinstance(def_node, Var):
+            var_type = 'Unknown' if def_node.type is None else str(def_node.type)
+            return f'{def_node.name()}: {var_type}'
+            
+            if isinstance(def_node.type, AnyType):
+                return 'Any'
+            if isinstance(def_node.type, Instance):
+                return def_node.type.type.fullname()
+            return short_type(def_node.type)
+
+        if isinstance(node, TypeInfo):
+            return node.fullname()
+
+        if isinstance(def_node, MypyFile):
+            return f'{def_node.fullname()}: module'
+
+        if isinstance(def_node, FuncBase):
+            result = f'function {def_node.fullname()}'
+            if isinstance(def_node, FuncDef):
+                result += f'({", ".join(def_node.arg_names)})'
+            return result
+            
+        return 'Unknown'
 
     @contextmanager
     def restore_after(self, target: str) -> Iterator[None]:
