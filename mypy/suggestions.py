@@ -37,6 +37,7 @@ from mypy.build import State
 from mypy.nodes import (
     ARG_POS, ARG_STAR, ARG_NAMED, ARG_STAR2, ARG_NAMED_OPT, FuncDef, MypyFile, SymbolTable,
     SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr, SymbolTableNode, Var,
+    AssignmentStmt, Context, RefExpr
 )
 from mypy.server.update import FineGrainedBuildManager
 from mypy.server.target import module_prefix, split_target
@@ -185,23 +186,29 @@ class SuggestionEngine:
         if node is None:
             return 'No name expression at this location'
 
-        if isinstance(node, NameExpr):
-            result = "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
+        def_node = None
+        result = ''
+        if isinstance(node, RefExpr):
+            result += "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
             def_node = node.node
-            if def_node is None:
-                result += 'Definition not found'
-            else:
-                filename = self.get_file(def_node, mypy_file)
-                if filename is None:
-                    result += "Could not find file name, guessing symbol is defined in same file.\n"
-                    filename = path
-                # Column is zero-based. Sometimes returns -1 :\
-                column = 1 if def_node.column == -1 else def_node.column + 1
-                result += "Definition of '%s' at %s:%s:%s (%s)" % (def_node.name(), filename, def_node.line, column, short_type(def_node))
+        elif isinstance(node, Instance):
+            result += "Find definition of '%s' at (%s:%s)\n" % (node.type.fullname(), node.line, node.column + 1)
+            def_node = node.type.defn
+        else:
+            return f'Unknown expression: {short_type(node)}'
             
-            return result
-
-        return f'Unknown expression: {short_type(node)}'
+        if def_node is None:
+            result += 'Definition not found'
+        else:
+            filename = self.get_file(def_node, mypy_file)
+            if filename is None:
+                result += "Could not find file name, guessing symbol is defined in same file.\n"
+                filename = path
+            # Column is zero-based. Sometimes returns -1 :\
+            column = 1 if def_node.column == -1 else def_node.column + 1
+            result += "Definition at %s:%s:%s (%s)" % (filename, def_node.line, column, short_type(def_node))
+        
+        return result
 
     @contextmanager
     def restore_after(self, target: str) -> Iterator[None]:
@@ -395,7 +402,7 @@ class SuggestionEngine:
 
         return (modname, tail, node)
 
-    def find_name_expr(self, path: str, line: int, column: int) -> Tuple[Optional[Node], MypyFile]:
+    def find_name_expr(self, path: str, line: int, column: int) -> Tuple[Optional[Context], MypyFile]:
         states = [t for t in self.fgmanager.graph.values() if t.path == path]
         if not states:
             loaded = '\n'.join([t.path or '<None>' for t in self.fgmanager.graph.values()])
@@ -674,13 +681,19 @@ class NodeFound(Exception):
 
 @universal_visitor()
 class NodeFinderByLocation(TraverserVisitor):
-    node: Optional[Node] = None
+    node: Optional[Context] = None
 
     def __init__(self, line, column) -> None:
         self.line = line
         self.column = column
 
-    def process_node(self, node: Node):
+    def process_node(self, node: Context):
         if node_contains_offset(node, self.line, self.column):
             self.node = node
             raise NodeFound()
+
+    def visit_assignment_stmt(self, o: AssignmentStmt):
+        if o.type:
+            self.process_node(o.type)
+        super().visit_assignment_stmt(o)
+        

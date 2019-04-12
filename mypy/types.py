@@ -109,8 +109,8 @@ class Type(mypy.nodes.Context):
 
     __slots__ = ('can_be_true', 'can_be_false')
 
-    def __init__(self, line: int = -1, column: int = -1) -> None:
-        super().__init__(line, column)
+    def __init__(self, line: int = -1, column: int = -1, end_line: int = -1, end_column: int = -1) -> None:
+        super().__init__(line, column, end_line, end_column)
         self.can_be_true = self.can_be_true_default()
         self.can_be_false = self.can_be_false_default()
 
@@ -578,8 +578,9 @@ class Instance(Type):
 
     def __init__(self, typ: mypy.nodes.TypeInfo, args: List[Type],
                  line: int = -1, column: int = -1, erased: bool = False,
-                 final_value: Optional['LiteralType'] = None) -> None:
-        super().__init__(line, column)
+                 final_value: Optional['LiteralType'] = None,
+                 end_line: int = -1, end_column: int = -1) -> None:
+        super().__init__(line, column, end_line, end_column)
         self.type = typ
         self.args = args
         self.type_ref = None  # type: Optional[str]

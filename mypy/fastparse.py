@@ -276,8 +276,8 @@ class ASTConverter:
     def set_line(self, node: N, n: Union[ast3.expr, ast3.stmt]) -> N:
         node.line = n.lineno
         node.column = n.col_offset
-        node.end_line = n.end_lineno if hasattr(n, 'end_lineno') else n.lineno
-        node.end_column = n.end_col_offset if hasattr(n, 'end_col_offset') else n.col_offset
+        node.end_line = n.end_lineno
+        node.end_column = n.end_col_offset
         return node
 
     def translate_expr_list(self, l: Sequence[AST]) -> List[Expression]:
@@ -672,6 +672,8 @@ class ASTConverter:
         typ = TypeConverter(self.errors, line=n.lineno).visit(n.annotation)
         assert typ is not None
         typ.column = n.annotation.col_offset
+        typ.end_column = n.annotation.end_col_offset
+        typ.end_line = n.annotation.end_lineno
         s = AssignmentStmt([self.visit(n.target)], rvalue, type=typ, new_syntax=True)
         return self.set_line(s, n)
 

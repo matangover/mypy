@@ -333,7 +333,7 @@ class TypeAnalyser(SyntheticTypeVisitor[Type], TypeAnalyzerPluginInterface):
         # checked only later, since we do not always know the
         # valid count at this point. Thus we may construct an
         # Instance with an invalid number of type arguments.
-        instance = Instance(info, self.anal_array(t.args), t.line, t.column)
+        instance = Instance(info, self.anal_array(t.args), t.line, t.column, end_line=t.end_line, end_column=t.end_column)
         if not t.args and self.options.disallow_any_generics and not self.defining_alias:
             # We report/patch invalid built-in instances already during second pass.
             # This is done to avoid storing additional state on instances.
