@@ -27,6 +27,8 @@ class Context:
     def __init__(self, line: int = -1, column: int = -1) -> None:
         self.line = line
         self.column = column
+        self.end_line = line
+        self.end_column = column
 
     def set_line(self, target: Union['Context', int], column: Optional[int] = None) -> None:
         """If target is a node, pull line (and column) information

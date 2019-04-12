@@ -36,7 +36,7 @@ from mypy.types import (
 from mypy.build import State
 from mypy.nodes import (
     ARG_POS, ARG_STAR, ARG_NAMED, ARG_STAR2, ARG_NAMED_OPT, FuncDef, MypyFile, SymbolTable,
-    SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr,
+    SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr, SymbolTableNode, Var,
 )
 from mypy.server.update import FineGrainedBuildManager
 from mypy.server.target import module_prefix, split_target
@@ -174,26 +174,31 @@ class SuggestionEngine:
         path, line_str, column_str = function.split(" ", 3)
         # Columns are zero based in the AST, but rows are 1-based.
         column = int(column_str) - 1
-        node = self.find_name_expr(path, int(line_str), column)
-        if not node:
+        try:
+            node, mypy_file = self.find_name_expr(path, int(line_str), column)
+        except RuntimeError as e:
+            return e.args[0]
+
+        if node is None:
             return 'No name expression at this location'
-        if isinstance(node, str):
-            return node
-        
-        result = "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
-        def_node = node.node
-        if def_node is None:
-            result += 'Definition not found'
-        else:
-            filename = self.get_file(def_node)
-            if filename is None:
-                result += "Could not find file name, guessing symbol is defined in same file.\n"
-                filename = path
-            # Column is zero-based. Sometimes returns -1 :\
-            column = 1 if def_node.column == -1 else def_node.column + 1
-            result += "Definition of '%s' at %s:%s:%s (%s)" % (def_node.name(), filename, def_node.line, column, short_type(def_node))
-        
-        return result
+
+        if isinstance(node, NameExpr):
+            result = "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
+            def_node = node.node
+            if def_node is None:
+                result += 'Definition not found'
+            else:
+                filename = self.get_file(def_node, mypy_file)
+                if filename is None:
+                    result += "Could not find file name, guessing symbol is defined in same file.\n"
+                    filename = path
+                # Column is zero-based. Sometimes returns -1 :\
+                column = 1 if def_node.column == -1 else def_node.column + 1
+                result += "Definition of '%s' at %s:%s:%s (%s)" % (def_node.name(), filename, def_node.line, column, short_type(def_node))
+            
+            return result
+
+        return f'Unknown expression: {short_type(node)}'
 
     @contextmanager
     def restore_after(self, target: str) -> Iterator[None]:
@@ -387,42 +392,53 @@ class SuggestionEngine:
 
         return (modname, tail, node)
 
-    def find_name_expr(self, path: str, line: int, column: int) -> Union[Optional[NameExpr], str]:
-        """From a target name, return module/target names and the func def."""
+    def find_name_expr(self, path: str, line: int, column: int) -> Tuple[Optional[Node], MypyFile]:
         states = [t for t in self.fgmanager.graph.values() if t.path == path]
         if not states:
-            loaded = '\n'.join([t.path for t in self.fgmanager.graph.values()])
-            return f'Module not found: {path}. Loaded modules:\n{loaded}'
+            loaded = '\n'.join([t.path or '<None>' for t in self.fgmanager.graph.values()])
+            raise RuntimeError(f'Module not found: {path}. Loaded modules:\n{loaded}')
         state = states[0]
         tree = self.ensure_loaded(state)
 
-        class NameFinder(TraverserVisitor):
-            node: Optional[NameExpr] = None
-            def __init__(self, line, column) -> None:
-                super().__init__()
-                self.line = line
-                self.column = column
-
-            def visit_name_expr(self, node: 'mypy.nodes.NameExpr') -> None:
-                if node_contains_offset(node, self.line, self.column):
-                    self.node = node
-            
-            # TODO: visit_var, visit_func_def etc.
+        finder = NodeFinderByLocation(line, column)
+        try:
+            tree.accept(finder)
+        except NodeFound:
+            pass
         
-        finder = NameFinder(line, column)
-        tree.accept(finder)
-        return finder.node
+        return finder.node, tree
 
-    def get_file(self, node: Node) -> Optional[str]:
+    def get_file(self, node: Node, mypy_file: MypyFile) -> Optional[str]:
         print(f'looking for {type(node)}')
-        mypy_files = self.fgmanager.graph.values()
+        if isinstance(node, MypyFile):
+            return node.path
+
+        mypy_files = [mypy_file]
+
+        if isinstance(node, Var):
+            tup = lookup_fully_qualified(node.fullname(), self.manager.modules)
+            if tup is None:
+                print('Var not found in modules')
+                return None
+            else:
+                var, mod = tup
+                if var.node == node:
+                    return mod.path
+                else:
+                    print(f'Found var but not identical. Found type is {short_type(var.node)}')
+                    if mod != mypy_file:
+                        mypy_files.append(mod)
+
+        # Search in current file first because the definition is usually in the same file.
+        mypy_files.extend([f for f in self.manager.modules.values() if f not in mypy_files])
+        
         if isinstance(node, TypeInfo):
             node = node.defn
         finder = NodeFinder(node)
         for file in mypy_files:
             print('looking in %s' % file.path)
-            tree = self.ensure_loaded(file)
-            tree.accept(finder)
+            # tree = self.ensure_loaded(file)
+            file.accept(finder)
             if finder.found:
                 return file.path
 
@@ -581,6 +597,87 @@ class NodeFinder(TraverserVisitor):
         self.found = False
 
     def process_node(self, node: Node):
-        print(f'process: {type(node)}')
+        # print(f'process: {type(node)}')
         if self.node_to_find == node:
             self.found = True
+
+
+# Copied from mypy.lookup but adjusted to return containing module as well.
+def lookup_fully_qualified(name: str, modules: Dict[str, MypyFile],
+                           raise_on_missing: bool = False) -> Optional[Tuple[SymbolTableNode, MypyFile]]:
+    """Find a symbol using it fully qualified name.
+
+    The algorithm has two steps: first we try splitting the name on '.' to find
+    the module, then iteratively look for each next chunk after a '.' (e.g. for
+    nested classes).
+
+    This function should *not* be used to find a module. Those should be looked
+    in the modules dictionary.
+    """
+    head = name
+    rest = []
+    # 1. Find a module tree in modules dictionary.
+    while True:
+        if '.' not in head:
+            if raise_on_missing:
+                assert '.' in head, "Cannot find module for %s" % (name,)
+            return None
+        head, tail = head.rsplit('.', maxsplit=1)
+        rest.append(tail)
+        mod = modules.get(head)
+        if mod is not None:
+            break
+    names = mod.names
+    # 2. Find the symbol in the module tree.
+    if not rest:
+        # Looks like a module, don't use this to avoid confusions.
+        if raise_on_missing:
+            assert rest, "Cannot find %s, got a module symbol" % (name,)
+        return None
+    while True:
+        key = rest.pop()
+        if key not in names:
+            if raise_on_missing:
+                assert key in names, "Cannot find component %r for %r" % (key, name)
+            return None
+        stnode = names[key]
+        if not rest:
+            return stnode, mod
+        node = stnode.node
+        # In fine-grained mode, could be a cross-reference to a deleted module
+        # or a Var made up for a missing module.
+        if not isinstance(node, TypeInfo):
+            if raise_on_missing:
+                assert node, "Cannot find %s" % (name,)
+            return None
+        names = node.names
+
+class NameFinder(TraverserVisitor):
+    node: Optional[NameExpr] = None
+    def __init__(self, line, column) -> None:
+        super().__init__()
+        self.line = line
+        self.column = column
+
+    def visit_name_expr(self, node: 'mypy.nodes.NameExpr') -> None:
+        if node_contains_offset(node, self.line, self.column):
+            self.node = node
+    
+    # TODO: visit_var, visit_func_def etc.
+
+
+class NodeFound(Exception):
+    pass
+
+@universal_visitor()
+class NodeFinderByLocation(TraverserVisitor):
+    node: Optional[Node] = None
+
+    def __init__(self, line, column) -> None:
+        self.line = line
+        self.column = column
+
+    def process_node(self, node: Node):
+        if node_contains_offset(node, self.line, self.column):
+            self.node = node
+            raise NodeFound()
