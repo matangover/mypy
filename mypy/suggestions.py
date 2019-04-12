@@ -171,6 +171,9 @@ class SuggestionEngine:
             return "%s:%s:%s" % (path, node.line, node.column)
 
     def suggest_callsites(self, function: str) -> str:
+        import ptvsd
+        ptvsd.enable_attach(address=('localhost', 5680)) # , redirect_output=True)
+
         path, line_str, column_str = function.split(" ", 3)
         # Columns are zero based in the AST, but rows are 1-based.
         column = int(column_str) - 1
