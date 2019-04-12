@@ -240,8 +240,8 @@ class SuggestionEngine:
                 return def_node.type.type.fullname()
             return short_type(def_node.type)
 
-        if isinstance(node, TypeInfo):
-            return node.fullname()
+        if isinstance(def_node, TypeInfo):
+            return def_node.fullname()
 
         if isinstance(def_node, MypyFile):
             return f'{def_node.fullname()}: module'
