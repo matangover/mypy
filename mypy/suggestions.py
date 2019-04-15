@@ -37,7 +37,7 @@ from mypy.build import State
 from mypy.nodes import (
     ARG_POS, ARG_STAR, ARG_NAMED, ARG_STAR2, ARG_NAMED_OPT, FuncDef, MypyFile, SymbolTable,
     SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr, SymbolTableNode, Var,
-    AssignmentStmt, Context, RefExpr, FuncBase
+    AssignmentStmt, Context, RefExpr, FuncBase, MemberExpr
 )
 from mypy.server.update import FineGrainedBuildManager
 from mypy.server.target import module_prefix, split_target
@@ -188,12 +188,15 @@ class SuggestionEngine:
 
         def_node = None
         result = ''
-        if isinstance(node, RefExpr):
+        if isinstance(node, NameExpr):
             result += "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
             def_node = node.node
         elif isinstance(node, Instance):
             result += "Find definition of '%s' at (%s:%s)\n" % (node.type.fullname(), node.line, node.column + 1)
             def_node = node.type.defn
+        elif isinstance(node, MemberExpr):
+            result += "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
+            def_node = get_definition(node, self.manager.all_types)
         else:
             return f'Unknown expression: {short_type(node)}'
             
@@ -223,10 +226,12 @@ class SuggestionEngine:
             return 'Unknown. No name expression at this location'
 
         def_node: Optional[Node] = None
-        if isinstance(node, RefExpr):
+        if isinstance(node, NameExpr):
             def_node = node.node
         elif isinstance(node, Instance):
             def_node = node.type
+        elif isinstance(node, MemberExpr):
+            def_node = get_definition(node, self.manager.all_types)
         else:
             return f'Unknown expression: {short_type(node)}'
         
@@ -748,4 +753,32 @@ class NodeFinderByLocation(TraverserVisitor):
                     self.process_node(arg_type)
                 self.process_node(o.type.ret_type)
         return super().visit_func_def(o)
-        
+
+
+def get_definition(node: MemberExpr, typemap: Dict[Expression, Type]) -> Optional[Node]:
+    typ = typemap.get(node.expr)
+    if typ is None:
+        return None
+    if isinstance(typ, Instance):
+        typeinfo = typ.type
+        if typeinfo is None:
+            return None
+        symbol_table_node = typeinfo.get(node.name)
+        if symbol_table_node is None:
+            return None
+        return symbol_table_node.node
+    else:
+        return None
+
+
+def get_typeinfo(node: Optional[Node]) -> Optional[TypeInfo]:
+    if node is None:
+        return None
+    elif isinstance(node, NameExpr):
+        return get_typeinfo(node.node)
+    elif isinstance(node, Var):
+        return get_typeinfo(node.type)
+    elif isinstance(node, Instance):
+        return get_typeinfo(node.type)
+    else:
+        return None
