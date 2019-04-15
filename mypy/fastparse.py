@@ -478,6 +478,11 @@ class ASTConverter:
             arg_types = [a.type_annotation for a in args]
             return_type = TypeConverter(self.errors, line=n.returns.lineno
                                         if n.returns else lineno).visit(n.returns)
+            if n.returns:
+                return_type.line = n.returns.lineno
+                return_type.end_line = n.returns.end_lineno
+                return_type.column = n.returns.col_offset
+                return_type.end_column = n.returns.end_col_offset
 
         for arg, arg_type in zip(args, arg_types):
             self.set_type_optional(arg_type, arg.initializer)
@@ -598,6 +603,10 @@ class ASTConverter:
             arg_type = None
             if annotation is not None:
                 arg_type = TypeConverter(self.errors, line=arg.lineno).visit(annotation)
+                arg_type.line = annotation.lineno
+                arg_type.end_line = annotation.end_lineno
+                arg_type.column = annotation.col_offset
+                arg_type.end_column = annotation.end_col_offset
             elif type_comment is not None:
                 extra_ignore, arg_type = parse_type_comment(type_comment, arg.lineno, self.errors)
                 if extra_ignore:

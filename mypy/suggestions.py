@@ -740,4 +740,12 @@ class NodeFinderByLocation(TraverserVisitor):
         if o.type:
             self.process_node(o.type)
         super().visit_assignment_stmt(o)
+
+    def visit_func_def(self, o: FuncDef):
+        if o.type:
+            if isinstance(o.type, CallableType):
+                for arg_type in o.type.arg_types:
+                    self.process_node(arg_type)
+                self.process_node(o.type.ret_type)
+        return super().visit_func_def(o)
         
