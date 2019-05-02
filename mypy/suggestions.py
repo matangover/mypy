@@ -756,29 +756,34 @@ class NodeFinderByLocation(TraverserVisitor):
 
 
 def get_definition(node: MemberExpr, typemap: Dict[Expression, Type]) -> Optional[Node]:
+    symbol_table_node: Optional[SymbolTableNode] = None
+
     typ = typemap.get(node.expr)
-    if typ is None:
-        return None
-    if isinstance(typ, Instance):
-        typeinfo = typ.type
-        if typeinfo is None:
+    if typ is not None:
+        if isinstance(typ, Instance):
+            symbol_table_node = get_symbol(typ.type, node.name)
+        else:
             return None
-        symbol_table_node = typeinfo.get(node.name)
-        if symbol_table_node is None:
-            return None
-        return symbol_table_node.node
     else:
-        return None
+        symbol_table_node = get_member(node.expr, node.name)
 
-
-def get_typeinfo(node: Optional[Node]) -> Optional[TypeInfo]:
-    if node is None:
+    if symbol_table_node is None:
         return None
+    return symbol_table_node.node
+
+def get_member(node: Optional[object], name: str) -> Optional[SymbolTableNode]:
+    if isinstance(node, MypyFile):
+        return node.names.get(name)
     elif isinstance(node, NameExpr):
-        return get_typeinfo(node.node)
+        return get_member(node.node, name)
     elif isinstance(node, Var):
-        return get_typeinfo(node.type)
+        return get_member(node.type, name)
     elif isinstance(node, Instance):
-        return get_typeinfo(node.type)
+        return get_member(node.type, name)
     else:
         return None
+
+def get_symbol(typeinfo: Optional[TypeInfo], name) -> Optional[SymbolTableNode]:
+    if typeinfo is None:
+        return None
+    return typeinfo.get(name)
