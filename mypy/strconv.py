@@ -46,7 +46,7 @@ class StrConv(NodeVisitor[str]):
         number. See mypy.util.dump_tagged for a description of the nodes
         argument.
         """
-        tag = short_type(obj) + ':' + str(obj.get_line())
+        tag = short_type(obj) + f':l{obj.line}c{obj.column}..l{obj.end_line}c{obj.end_column}'
         if self.show_ids:
             assert self.id_mapper is not None
             tag += '<{}>'.format(self.get_id(obj))
@@ -63,7 +63,7 @@ class StrConv(NodeVisitor[str]):
         for arg in o.arguments:
             kind = arg.kind  # type: int
             if kind in (mypy.nodes.ARG_POS, mypy.nodes.ARG_NAMED):
-                args.append(arg.variable)
+                args.append([arg.variable, arg.type_annotation])
             elif kind in (mypy.nodes.ARG_OPT, mypy.nodes.ARG_NAMED_OPT):
                 assert arg.initializer is not None
                 args.append(('default', [arg.variable, arg.initializer]))
@@ -76,6 +76,7 @@ class StrConv(NodeVisitor[str]):
             a.append(('Args', args))
         if o.type:
             a.append(o.type)
+            a.append(o.type.ret_type)
         if o.is_generator:
             a.append('Generator')
         a.extend(extra)
@@ -108,7 +109,7 @@ class StrConv(NodeVisitor[str]):
                 a.append('{} : {}'.format(id, as_id))
             else:
                 a.append(id)
-        return 'Import:{}({})'.format(o.line, ', '.join(a))
+        return 'Import:l{}c{}..l{}c{}({})'.format(o.line, o.column, o.end_line, o.end_column, ', '.join(a))
 
     def visit_import_from(self, o: 'mypy.nodes.ImportFrom') -> str:
         a = []
@@ -117,7 +118,7 @@ class StrConv(NodeVisitor[str]):
                 a.append('{} : {}'.format(name, as_name))
             else:
                 a.append(name)
-        return 'ImportFrom:{}({}, [{}])'.format(o.line, "." * o.relative + o.id, ', '.join(a))
+        return 'ImportFrom:l{}c{}..l{}c{}({}, [{}])'.format(o.line, o.column, o.end_line, o.end_column, "." * o.relative + o.id, ', '.join(a))
 
     def visit_import_all(self, o: 'mypy.nodes.ImportAll') -> str:
         return 'ImportAll:{}({})'.format(o.line, "." * o.relative + o.id)
@@ -316,16 +317,16 @@ class StrConv(NodeVisitor[str]):
     # Simple expressions
 
     def visit_int_expr(self, o: 'mypy.nodes.IntExpr') -> str:
-        return 'IntExpr({})'.format(o.value)
+        return 'IntExpr{}({})'.format(self.loc(o), o.value)
 
     def visit_str_expr(self, o: 'mypy.nodes.StrExpr') -> str:
-        return 'StrExpr({})'.format(self.str_repr(o.value))
+        return 'StrExpr{}({})'.format(self.loc(o), self.str_repr(o.value))
 
     def visit_bytes_expr(self, o: 'mypy.nodes.BytesExpr') -> str:
-        return 'BytesExpr({})'.format(self.str_repr(o.value))
+        return 'BytesExpr{}({})'.format(self.loc(o), self.str_repr(o.value))
 
     def visit_unicode_expr(self, o: 'mypy.nodes.UnicodeExpr') -> str:
-        return 'UnicodeExpr({})'.format(self.str_repr(o.value))
+        return 'UnicodeExpr{}({})'.format(self.loc(o), self.str_repr(o.value))
 
     def str_repr(self, s: str) -> str:
         s = re.sub(r'\\u[0-9a-fA-F]{4}', lambda m: '\\' + m.group(0), s)
@@ -333,13 +334,13 @@ class StrConv(NodeVisitor[str]):
                       lambda m: r'\u%.4x' % ord(m.group(0)), s)
 
     def visit_float_expr(self, o: 'mypy.nodes.FloatExpr') -> str:
-        return 'FloatExpr({})'.format(o.value)
+        return 'FloatExpr{}({})'.format(self.loc(o), o.value)
 
     def visit_complex_expr(self, o: 'mypy.nodes.ComplexExpr') -> str:
-        return 'ComplexExpr({})'.format(o.value)
+        return 'ComplexExpr{}({})'.format(self.loc(o), o.value)
 
     def visit_ellipsis(self, o: 'mypy.nodes.EllipsisExpr') -> str:
-        return 'Ellipsis'
+        return 'Ellipsis' + self.loc(o)
 
     def visit_star_expr(self, o: 'mypy.nodes.StarExpr') -> str:
         return self.dump([o.expr], o)
@@ -350,7 +351,10 @@ class StrConv(NodeVisitor[str]):
                                   o.node)
         if isinstance(o.node, mypy.nodes.Var) and o.node.is_final:
             pretty += ' = {}'.format(o.node.final_value)
-        return short_type(o) + '(' + pretty + ')'
+        return short_type(o) + self.loc(o) + '(' + pretty + ')'
+
+    def loc(self, o: 'mypy.nodes.Node') -> str:
+        return f':l{o.line}c{o.column}..l{o.end_line}c{o.end_column}'
 
     def pretty_name(self, name: str, kind: Optional[int], fullname: Optional[str],
                     is_inferred_def: bool, target_node: 'Optional[mypy.nodes.Node]' = None) -> str:
@@ -549,7 +553,7 @@ def dump_tagged(nodes: Sequence[object], tag: Optional[str], str_conv: 'StrConv'
         elif isinstance(n, mypy.nodes.Node):
             a.append(indent(n.accept(str_conv), 2))
         elif isinstance(n, Type):
-            a.append(indent(n.accept(TypeStrVisitor(str_conv.id_mapper)), 2))
+            a.append(indent(n.accept(TypeStrVisitor(str_conv.id_mapper)), 2) + loc(n))
         elif n:
             a.append(indent(str(n), 2))
     if tag:
@@ -562,3 +566,6 @@ def indent(s: str, n: int) -> str:
     s = ' ' * n + s
     s = s.replace('\n', '\n' + ' ' * n)
     return s
+
+def loc(o: 'mypy.nodes.Context') -> str:
+    return f':l{o.line}c{o.column}..l{o.end_line}c{o.end_column}'
