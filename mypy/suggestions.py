@@ -21,12 +21,11 @@ Other things:
  * Like something with tracking constraints/unification variables?
  * No understanding of type variables at *all*
 """
-import functools
+
 from typing import (
     List, Optional, Set, Tuple, Dict, Callable, Union, NamedTuple, TypeVar, Iterator,
 )
 
-from mypy.util import short_type
 import mypy.checker
 import mypy.types
 from mypy.state import strict_optional_set
@@ -36,8 +35,7 @@ from mypy.types import (
 from mypy.build import State
 from mypy.nodes import (
     ARG_POS, ARG_STAR, ARG_NAMED, ARG_STAR2, ARG_NAMED_OPT, FuncDef, MypyFile, SymbolTable,
-    SymbolNode, TypeInfo, Node, Expression, ReturnStmt, NameExpr, SymbolTableNode, Var,
-    AssignmentStmt, Context, RefExpr, FuncBase, MemberExpr
+    SymbolNode, TypeInfo, Node, Expression, ReturnStmt,
 )
 from mypy.server.update import FineGrainedBuildManager
 from mypy.server.target import module_prefix, split_target
@@ -143,7 +141,7 @@ class SuggestionEngine:
         self.plugin = self.manager.plugin
         self.graph = fgmanager.graph
 
-    def suggest_orig(self, function: str, give_json: bool) -> str:
+    def suggest(self, function: str, give_json: bool) -> str:
         """Suggest an inferred type for function."""
         with self.restore_after(function):
             with self.with_export_types():
@@ -154,7 +152,7 @@ class SuggestionEngine:
         else:
             return suggestion
 
-    def suggest_callsites_orig(self, function: str) -> str:
+    def suggest_callsites(self, function: str) -> str:
         """Find a list of call sites of function."""
         with self.restore_after(function):
             _, _, node = self.find_node(function)
@@ -164,100 +162,6 @@ class SuggestionEngine:
             ["%s:%s: %s" % (path, line, self.format_args(arg_kinds, arg_names, arg_types))
              for path, line, arg_kinds, _, arg_names, arg_types in callsites]
         ))
-
-    def suggest_callsites_find_def(self, function: str) -> str:
-        with self.restore_after(function):
-            modname, _, node = self.find_node(function)
-            path = self.fgmanager.graph[modname].path
-            return "%s:%s:%s" % (path, node.line, node.column)
-
-    def suggest_callsites(self, function: str) -> str:
-        import ptvsd
-        ptvsd.enable_attach(address=('localhost', 5680)) # , redirect_output=True)
-
-        path, line_str, column_str = function.split(" ", 3)
-        # Columns are zero based in the AST, but rows are 1-based.
-        column = int(column_str) - 1
-        try:
-            node, mypy_file = self.find_name_expr(path, int(line_str), column)
-        except RuntimeError as e:
-            return e.args[0]
-
-        if node is None:
-            return 'No name expression at this location'
-
-        def_node = None
-        result = ''
-        if isinstance(node, NameExpr):
-            result += "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
-            def_node = node.node
-        elif isinstance(node, Instance):
-            result += "Find definition of '%s' at (%s:%s)\n" % (node.type.fullname(), node.line, node.column + 1)
-            def_node = node.type.defn
-        elif isinstance(node, MemberExpr):
-            result += "Find definition of '%s' (%s:%s)\n" % (node.name, node.line, node.column + 1)
-            def_node = get_definition(node, self.manager.all_types)
-        else:
-            return f'Unknown expression: {short_type(node)}'
-            
-        if def_node is None:
-            result += 'Definition not found'
-        else:
-            filename = self.get_file(def_node, mypy_file)
-            if filename is None:
-                result += "Could not find file name, guessing symbol is defined in same file.\n"
-                filename = path
-            # Column is zero-based. Sometimes returns -1 :\
-            column = 1 if def_node.column == -1 else def_node.column + 1
-            result += "Definition at %s:%s:%s (%s)" % (filename, def_node.line, column, short_type(def_node))
-        
-        return result
-
-    def suggest(self, function: str, give_json: bool) -> str:
-        path, line_str, column_str = function.split(" ", 3)
-        # Columns are zero based in the AST, but rows are 1-based.
-        column = int(column_str) - 1
-        try:
-            node, mypy_file = self.find_name_expr(path, int(line_str), column)
-        except RuntimeError as e:
-            return e.args[0]
-
-        if node is None:
-            return 'Unknown. No name expression at this location'
-
-        def_node: Optional[Node] = None
-        if isinstance(node, NameExpr):
-            def_node = node.node
-        elif isinstance(node, Instance):
-            def_node = node.type
-        elif isinstance(node, MemberExpr):
-            def_node = get_definition(node, self.manager.all_types)
-        else:
-            return f'Unknown expression: {short_type(node)}'
-        
-        if isinstance(def_node, Var):
-            var_type = 'Unknown' if def_node.type is None else str(def_node.type)
-            return f'{def_node.name()}: {var_type}'
-            
-            if isinstance(def_node.type, AnyType):
-                return 'Any'
-            if isinstance(def_node.type, Instance):
-                return def_node.type.type.fullname()
-            return short_type(def_node.type)
-
-        if isinstance(def_node, TypeInfo):
-            return def_node.fullname()
-
-        if isinstance(def_node, MypyFile):
-            return f'{def_node.fullname()}: module'
-
-        if isinstance(def_node, FuncBase):
-            result = f'function {def_node.fullname()}'
-            if isinstance(def_node, FuncDef):
-                result += f'({", ".join(def_node.arg_names)})'
-            return result
-            
-        return 'Unknown'
 
     @contextmanager
     def restore_after(self, target: str) -> Iterator[None]:
@@ -451,58 +355,6 @@ class SuggestionEngine:
 
         return (modname, tail, node)
 
-    def find_name_expr(self, path: str, line: int, column: int) -> Tuple[Optional[Context], MypyFile]:
-        states = [t for t in self.fgmanager.graph.values() if t.path == path]
-        if not states:
-            loaded = '\n'.join([t.path or '<None>' for t in self.fgmanager.graph.values()])
-            raise RuntimeError(f'Module not found: {path}. Loaded modules:\n{loaded}')
-        state = states[0]
-        tree = self.ensure_loaded(state)
-
-        finder = NodeFinderByLocation(line, column)
-        try:
-            tree.accept(finder)
-        except NodeFound:
-            pass
-        
-        return finder.node, tree
-
-    def get_file(self, node: Node, mypy_file: MypyFile) -> Optional[str]:
-        print(f'looking for {type(node)}')
-        if isinstance(node, MypyFile):
-            return node.path
-
-        mypy_files = [mypy_file]
-
-        if isinstance(node, Var):
-            tup = lookup_fully_qualified(node.fullname(), self.manager.modules)
-            if tup is None:
-                print('Var not found in modules')
-                return None
-            else:
-                var, mod = tup
-                if var.node == node:
-                    return mod.path
-                else:
-                    print(f'Found var but not identical. Found type is {short_type(var.node)}')
-                    if mod != mypy_file:
-                        mypy_files.append(mod)
-
-        # Search in current file first because the definition is usually in the same file.
-        mypy_files.extend([f for f in self.manager.modules.values() if f not in mypy_files])
-        
-        if isinstance(node, TypeInfo):
-            node = node.defn
-        finder = NodeFinder(node)
-        for file in mypy_files:
-            print('looking in %s' % file.path)
-            # tree = self.ensure_loaded(file)
-            file.accept(finder)
-            if finder.found:
-                return file.path
-
-        return None
-
     def try_type(self, func: FuncDef, typ: Type) -> List[str]:
         """Recheck a function while assuming it has type typ.
 
@@ -621,169 +473,3 @@ def dedup(old: List[T]) -> List[T]:
         if x not in new:
             new.append(x)
     return new
-
-def node_contains_offset(node, line, column):
-    if (line < node.line or line > node.end_line) or (
-        node.line == line and column < node.column) or (
-        node.end_line == line and column > node.end_column):
-        return False
-    
-    return True
-
-def universal_visitor():
-    def decorator(visitor):
-        visit_funcs = [func for func in dir(visitor) if func.startswith('visit_')]
-        class UniversalVisitor(visitor):
-            pass
-
-        for func in visit_funcs:
-            def wrap(f):
-                orig_func = getattr(visitor, f)
-                @functools.wraps(orig_func)
-                def wrapped(self, node, *args, **kwargs):
-                    orig_func(self, node, *args, **kwargs)
-                    self.process_node(node)
-                return wrapped
-            setattr(UniversalVisitor, func, wrap(func))
-
-        return UniversalVisitor
-    return decorator
-
-@universal_visitor()
-class NodeFinder(TraverserVisitor):
-    def __init__(self, node_to_find: Node):
-        self.node_to_find = node_to_find
-        self.found = False
-
-    def process_node(self, node: Node):
-        # print(f'process: {type(node)}')
-        if self.node_to_find == node:
-            self.found = True
-
-
-# Copied from mypy.lookup but adjusted to return containing module as well.
-def lookup_fully_qualified(name: str, modules: Dict[str, MypyFile],
-                           raise_on_missing: bool = False) -> Optional[Tuple[SymbolTableNode, MypyFile]]:
-    """Find a symbol using it fully qualified name.
-
-    The algorithm has two steps: first we try splitting the name on '.' to find
-    the module, then iteratively look for each next chunk after a '.' (e.g. for
-    nested classes).
-
-    This function should *not* be used to find a module. Those should be looked
-    in the modules dictionary.
-    """
-    head = name
-    rest = []
-    # 1. Find a module tree in modules dictionary.
-    while True:
-        if '.' not in head:
-            if raise_on_missing:
-                assert '.' in head, "Cannot find module for %s" % (name,)
-            return None
-        head, tail = head.rsplit('.', maxsplit=1)
-        rest.append(tail)
-        mod = modules.get(head)
-        if mod is not None:
-            break
-    names = mod.names
-    # 2. Find the symbol in the module tree.
-    if not rest:
-        # Looks like a module, don't use this to avoid confusions.
-        if raise_on_missing:
-            assert rest, "Cannot find %s, got a module symbol" % (name,)
-        return None
-    while True:
-        key = rest.pop()
-        if key not in names:
-            if raise_on_missing:
-                assert key in names, "Cannot find component %r for %r" % (key, name)
-            return None
-        stnode = names[key]
-        if not rest:
-            return stnode, mod
-        node = stnode.node
-        # In fine-grained mode, could be a cross-reference to a deleted module
-        # or a Var made up for a missing module.
-        if not isinstance(node, TypeInfo):
-            if raise_on_missing:
-                assert node, "Cannot find %s" % (name,)
-            return None
-        names = node.names
-
-class NameFinder(TraverserVisitor):
-    node: Optional[NameExpr] = None
-    def __init__(self, line, column) -> None:
-        super().__init__()
-        self.line = line
-        self.column = column
-
-    def visit_name_expr(self, node: 'mypy.nodes.NameExpr') -> None:
-        if node_contains_offset(node, self.line, self.column):
-            self.node = node
-    
-    # TODO: visit_var, visit_func_def etc.
-
-
-class NodeFound(Exception):
-    pass
-
-@universal_visitor()
-class NodeFinderByLocation(TraverserVisitor):
-    node: Optional[Context] = None
-
-    def __init__(self, line, column) -> None:
-        self.line = line
-        self.column = column
-
-    def process_node(self, node: Context):
-        if node_contains_offset(node, self.line, self.column):
-            self.node = node
-            raise NodeFound()
-
-    def visit_assignment_stmt(self, o: AssignmentStmt):
-        if o.type:
-            self.process_node(o.type)
-        super().visit_assignment_stmt(o)
-
-    def visit_func_def(self, o: FuncDef):
-        if o.type:
-            if isinstance(o.type, CallableType):
-                for arg_type in o.type.arg_types:
-                    self.process_node(arg_type)
-                self.process_node(o.type.ret_type)
-        return super().visit_func_def(o)
-
-
-def get_definition(node: MemberExpr, typemap: Dict[Expression, Type]) -> Optional[Node]:
-    symbol_table_node: Optional[SymbolTableNode] = None
-
-    typ = typemap.get(node.expr)
-    if typ is not None:
-        if isinstance(typ, Instance):
-            symbol_table_node = get_symbol(typ.type, node.name)
-        else:
-            return None
-    else:
-        symbol_table_node = get_member(node.expr, node.name)
-
-    if symbol_table_node is None:
-        return None
-    return symbol_table_node.node
-
-def get_member(node: Optional[object], name: str) -> Optional[SymbolTableNode]:
-    if isinstance(node, MypyFile):
-        return node.names.get(name)
-    elif isinstance(node, NameExpr):
-        return get_member(node.node, name)
-    elif isinstance(node, Var):
-        return get_member(node.type, name)
-    elif isinstance(node, Instance):
-        return get_member(node.type, name)
-    else:
-        return None
-
-def get_symbol(typeinfo: Optional[TypeInfo], name) -> Optional[SymbolTableNode]:
-    if typeinfo is None:
-        return None
-    return typeinfo.get(name)
