@@ -363,6 +363,9 @@ class FineGrainedBuildManager:
 
         manager.errors.reset()
         self.processed_targets.append(module)
+        if self.manager.status_callback:
+            self.manager.status_callback(len(self.processed_targets))
+        
         result = update_module_isolated(module, path, manager, previous_modules, graph,
                                         force_removed)
         if isinstance(result, BlockedUpdate):
@@ -947,6 +950,8 @@ def reprocess_nodes(manager: BuildManager,
     patches = []  # type: List[Callable[[], None]]
     for deferred in nodes:
         processed_targets.append(deferred.node.fullname())
+        if manager.status_callback:
+            manager.status_callback(len(processed_targets))
         if not manager.options.new_semantic_analyzer:
             strip_target(deferred.node)
         else:

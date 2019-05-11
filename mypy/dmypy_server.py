@@ -191,6 +191,7 @@ class Server:
         # (details in https://github.com/python/mypy/issues/4492)
         options.local_partial_types = True
         self.status_file = status_file
+        self.status_callback = None
 
     def _response_metadata(self) -> Dict[str, str]:
         py_version = '{}_{}'.format(self.options.python_version[0], self.options.python_version[1])
@@ -381,7 +382,8 @@ class Server:
         try:
             result = mypy.build.build(sources=sources,
                                       options=self.options,
-                                      fscache=self.fscache)
+                                      fscache=self.fscache,
+                                      status_callback=self.status_callback)
         except mypy.errors.CompileError as e:
             output = ''.join(s + '\n' for s in e.messages)
             if e.use_stdout:

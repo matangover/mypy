@@ -127,6 +127,7 @@ def build(sources: List[BuildSource],
           alt_lib_path: Optional[str] = None,
           flush_errors: Optional[Callable[[List[str], bool], None]] = None,
           fscache: Optional[FileSystemCache] = None,
+          status_callback: Optional[Callable[[int], None]] = None,
           ) -> BuildResult:
     """Analyze a program.
 
@@ -160,7 +161,7 @@ def build(sources: List[BuildSource],
     flush_errors = flush_errors or default_flush_errors
 
     try:
-        result = _build(sources, options, alt_lib_path, flush_errors, fscache)
+        result = _build(sources, options, alt_lib_path, flush_errors, fscache, status_callback)
         result.errors = messages
         return result
     except CompileError as e:
@@ -179,6 +180,7 @@ def _build(sources: List[BuildSource],
            alt_lib_path: Optional[str],
            flush_errors: Callable[[List[str], bool], None],
            fscache: Optional[FileSystemCache],
+           status_callback: Optional[Callable[[int], None]] = None
            ) -> BuildResult:
     # This seems the most reasonable place to tune garbage collection.
     gc.set_threshold(150 * 1000)
@@ -211,8 +213,9 @@ def _build(sources: List[BuildSource],
                            plugins_snapshot=snapshot,
                            errors=errors,
                            flush_errors=flush_errors,
-                           fscache=fscache)
-
+                           fscache=fscache,
+                           status_callback=status_callback
+                           )
     reset_global_state()
     try:
         graph = dispatch(sources, manager)
@@ -494,6 +497,7 @@ class BuildManager(BuildManagerBase):
                  errors: Errors,
                  flush_errors: Callable[[List[str], bool], None],
                  fscache: FileSystemCache,
+                 status_callback: Optional[Callable[[int], None]] = None
                  ) -> None:
         super().__init__()
         self.start_time = time.time()
@@ -557,6 +561,8 @@ class BuildManager(BuildManagerBase):
         self.plugins_snapshot = plugins_snapshot
         self.old_plugins_snapshot = read_plugins_snapshot(self)
         self.quickstart_state = read_quickstart_file(options)
+        self.status_callback = status_callback
+        self.processed_modules = 0
 
     def dump_stats(self) -> None:
         self.log("Stats:")
@@ -2884,6 +2890,9 @@ def process_stale_scc(graph: Graph, scc: List[str], manager: BuildManager) -> No
         manager.flush_errors(manager.errors.file_messages(graph[id].xpath), False)
         graph[id].write_cache()
         graph[id].mark_as_rechecked()
+    if manager.status_callback:
+        manager.processed_modules += len(graph)
+        manager.status_callback(manager.processed_modules)
 
 
 def sorted_components(graph: Graph,
