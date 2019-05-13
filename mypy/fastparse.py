@@ -904,7 +904,12 @@ class ASTConverter:
     # Lambda(arguments args, expr body)
     def visit_Lambda(self, n: ast3.Lambda) -> LambdaExpr:
         body = ast3.Return(n.body)
-        self.set_line(body, n)
+        body.lineno = n.lineno
+        body.col_offset = n.col_offset
+        if hasattr(n, 'end_lineno'):
+            body.end_lineno = n.end_lineno
+        if hasattr(n, 'end_col_offset'):
+            body.end_col_offset = n.end_col_offset
 
         e = LambdaExpr(self.transform_args(n.args, n.lineno),
                        self.as_required_block([body], n.lineno))
