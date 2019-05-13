@@ -25,7 +25,7 @@ from mypy.nodes import (
     UnaryExpr, LambdaExpr, ComparisonExpr,
     StarExpr, YieldFromExpr, NonlocalDecl, DictionaryComprehension,
     SetComprehension, ComplexExpr, EllipsisExpr, YieldExpr, Argument,
-    AwaitExpr, TempNode, Expression, Statement,
+    AwaitExpr, TempNode, Expression, Statement, Context,
     ARG_POS, ARG_OPT, ARG_STAR, ARG_NAMED, ARG_NAMED_OPT, ARG_STAR2,
     check_arg_names,
     FakeInfo,
@@ -112,7 +112,7 @@ except ImportError:
               file=sys.stderr)
     sys.exit(1)
 
-N = TypeVar('N', bound=Node)
+N = TypeVar('N', bound=Context)
 
 # There is no way to create reasonable fallbacks at this stage,
 # they must be patched later.
@@ -273,12 +273,12 @@ class ASTConverter:
             self.visitor_cache[typeobj] = visitor
         return visitor(node)
 
-    def set_line(self, node: N, n: Union[ast3.expr, ast3.stmt]) -> N:
+    def set_line(self, node: N, n: AST) -> N:
         node.line = n.lineno
         node.column = n.col_offset
-        # TODO: End positions exist only from Python 3.8.
-        node.end_line = n.end_lineno if hasattr(n, 'end_lineno') else n.lineno
-        node.end_column = n.end_col_offset if hasattr(n, 'end_col_offset') else n.col_offset
+        # End positions exist only from Python 3.8, and they can be None.
+        node.end_line = getattr(n, 'end_lineno') or n.lineno
+        node.end_column = getattr(n, 'end_col_offset') or n.col_offset
         return node
 
     def translate_expr_list(self, l: Sequence[AST]) -> List[Expression]:
@@ -476,7 +476,7 @@ class ASTConverter:
             arg_types = [a.type_annotation for a in args]
             return_type = TypeConverter(self.errors, line=n.returns.lineno
                                         if n.returns else lineno).visit(n.returns)
-            if n.returns:
+            if return_type and n.returns:
                 self.set_line(return_type, n.returns)
 
         for arg, arg_type in zip(args, arg_types):
@@ -605,6 +605,7 @@ class ASTConverter:
                     self.extra_type_ignores.append(arg.lineno)
         argument = Argument(Var(arg.arg), arg_type, self.visit(default), kind)
         argument.set_line(arg.lineno, arg.col_offset)
+        self.set_line(argument, arg)
         return argument
 
     def fail_arg(self, msg: str, arg: ast3.arg) -> None:
