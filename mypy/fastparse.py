@@ -277,10 +277,8 @@ class ASTConverter:
         node.line = n.lineno
         node.column = n.col_offset
         # TODO: End positions exist only from Python 3.8.
-        # node.end_line = n.end_lineno if hasattr(n, 'end_lineno') else n.lineno
-        # node.end_column = n.end_col_offset if hasattr(n, 'end_col_offset') else n.col_offset
-        node.end_line = n.end_lineno
-        node.end_column = n.end_col_offset
+        node.end_line = n.end_lineno if hasattr(n, 'end_lineno') else n.lineno
+        node.end_column = n.end_col_offset if hasattr(n, 'end_col_offset') else n.col_offset
         return node
 
     def translate_expr_list(self, l: Sequence[AST]) -> List[Expression]:
@@ -479,10 +477,7 @@ class ASTConverter:
             return_type = TypeConverter(self.errors, line=n.returns.lineno
                                         if n.returns else lineno).visit(n.returns)
             if n.returns:
-                return_type.line = n.returns.lineno
-                return_type.end_line = n.returns.end_lineno
-                return_type.column = n.returns.col_offset
-                return_type.end_column = n.returns.end_col_offset
+                self.set_line(return_type, n.returns)
 
         for arg, arg_type in zip(args, arg_types):
             self.set_type_optional(arg_type, arg.initializer)
@@ -603,10 +598,7 @@ class ASTConverter:
             arg_type = None
             if annotation is not None:
                 arg_type = TypeConverter(self.errors, line=arg.lineno).visit(annotation)
-                arg_type.line = annotation.lineno
-                arg_type.end_line = annotation.end_lineno
-                arg_type.column = annotation.col_offset
-                arg_type.end_column = annotation.end_col_offset
+                self.set_line(arg_type, annotation)
             elif type_comment is not None:
                 extra_ignore, arg_type = parse_type_comment(type_comment, arg.lineno, self.errors)
                 if extra_ignore:
@@ -683,9 +675,7 @@ class ASTConverter:
             rvalue = self.visit(n.value)
         typ = TypeConverter(self.errors, line=n.lineno).visit(n.annotation)
         assert typ is not None
-        typ.column = n.annotation.col_offset
-        typ.end_column = n.annotation.end_col_offset
-        typ.end_line = n.annotation.end_lineno
+        self.set_line(typ, n.annotation)
         s = AssignmentStmt([self.visit(n.target)], rvalue, type=typ, new_syntax=True)
         return self.set_line(s, n)
 
@@ -914,10 +904,7 @@ class ASTConverter:
     # Lambda(arguments args, expr body)
     def visit_Lambda(self, n: ast3.Lambda) -> LambdaExpr:
         body = ast3.Return(n.body)
-        body.lineno = n.lineno
-        body.col_offset = n.col_offset
-        body.end_lineno = n.end_lineno
-        body.end_col_offset = n.end_col_offset
+        self.set_line(body, n)
 
         e = LambdaExpr(self.transform_args(n.args, n.lineno),
                        self.as_required_block([body], n.lineno))
