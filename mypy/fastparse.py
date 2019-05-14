@@ -277,8 +277,8 @@ class ASTConverter:
         node.line = n.lineno
         node.column = n.col_offset
         # End positions exist only from Python 3.8, and they can be None.
-        node.end_line = getattr(n, 'end_lineno') or n.lineno
-        node.end_column = getattr(n, 'end_col_offset') or n.col_offset
+        node.end_line = getattr(n, 'end_lineno', None) or n.lineno
+        node.end_column = getattr(n, 'end_col_offset', None) or n.col_offset
         return node
 
     def translate_expr_list(self, l: Sequence[AST]) -> List[Expression]:
