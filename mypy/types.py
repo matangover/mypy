@@ -1936,7 +1936,7 @@ class TypeStrVisitor(SyntheticTypeVisitor[str]):
                 s += name + ': '
             s += t.arg_types[i].accept(self)
             if t.arg_kinds[i] in (ARG_OPT, ARG_NAMED_OPT):
-                s += ' ='
+                s += ' = ...'
 
         s = '({})'.format(s)
 
