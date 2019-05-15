@@ -1239,8 +1239,8 @@ class SemanticAnalyzerPass2(NodeVisitor[None],
         try:
             calculate_mro(defn.info, obj_type)
         except MroError:
-            self.fail_blocker('Cannot determine consistent method resolution '
-                              'order (MRO) for "%s"' % defn.name, defn)
+            # self.fail_blocker('Cannot determine consistent method resolution '
+                            #   'order (MRO) for "%s"' % defn.name, defn)
             defn.info.mro = []
         # Allow plugins to alter the MRO to handle the fact that `def mro()`
         # on metaclasses permits MRO rewriting.

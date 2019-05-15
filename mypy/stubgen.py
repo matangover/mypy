@@ -311,7 +311,7 @@ class ImportTracker:
                 # Collect the name in the module_map
                 if name in self.reverse_alias:
                     name = '{} as {}'.format(self.reverse_alias[name], name)
-                elif name in self.reexports:
+                elif '.' not in name: #name in self.reexports:
                     name = '{} as {}'.format(name, name)
                 module_map[m].append(name)
             else:
@@ -320,8 +320,10 @@ class ImportTracker:
                 if name in self.reverse_alias:
                     name, alias = self.reverse_alias[name], name
                     result.append("import {} as {}\n".format(self.direct_imports[name], alias))
-                elif name in self.reexports:
-                    assert '.' not in name  # Because reexports only has nonqualified names
+                # elif name in self.reexports:
+                #     assert '.' not in name  # Because reexports only has nonqualified names
+                #     result.append("import {} as {}\n".format(name, name))
+                elif '.' not in name:
                     result.append("import {} as {}\n".format(name, name))
                 else:
                     result.append("import {}\n".format(self.direct_imports[name]))
@@ -336,7 +338,7 @@ class StubGenerator(mypy.traverser.TraverserVisitor):
     def __init__(self, _all_: Optional[List[str]], pyversion: Tuple[int, int],
                  include_private: bool = False, analyzed: bool = False) -> None:
         # Best known value of __all__.
-        self._all_ = _all_
+        self._all_ = _all_ # None
         self._output = []  # type: List[str]
         self._import_lines = []  # type: List[str]
         # Current indent level (indent is hardcoded to 4 spaces).
@@ -675,18 +677,18 @@ class StubGenerator(mypy.traverser.TraverserVisitor):
         for name, alias in o.names:
             self.record_name(alias or name)
 
-        if self._all_:
+        if False: #self._all_:
             # Include import froms that import names defined in __all__.
             names = [name for name, alias in o.names
                      if name in self._all_ and alias is None]
             exported_names.update(names)
         else:
             # Include import from targets that import from a submodule of a package.
-            if o.relative:
+            if True: #o.relative:
                 sub_names = [name for name, alias in o.names
                              if alias is None]
                 exported_names.update(sub_names)
-                if o.id:
+                if o.id and o.id.startswith('tensorflow'):
                     for name in sub_names:
                         self.import_tracker.require_name(name)
 
@@ -978,6 +980,7 @@ def mypy_options(stubgen_options: Options) -> MypyOptions:
     options.ignore_errors = True
     options.semantic_analysis_only = True
     options.python_version = stubgen_options.pyversion
+    options.show_traceback = True
     return options
 
 

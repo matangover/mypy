@@ -61,7 +61,7 @@ def walk_packages(packages: List[str]) -> Iterator[str]:
     for package_name in packages:
         try:
             package = importlib.import_module(package_name)
-        except Exception:
+        except (Exception, SystemError):
             report_missing(package_name)
             continue
         yield package.__name__
@@ -125,7 +125,7 @@ def find_module_path_and_all_py3(module: str) -> Optional[Tuple[str, Optional[Li
     # TODO: Support custom interpreters.
     try:
         mod = importlib.import_module(module)
-    except Exception:
+    except (Exception, SystemExit):
         raise CantImport(module)
     if is_c_module(mod):
         return None
